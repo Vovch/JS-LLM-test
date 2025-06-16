@@ -68,8 +68,6 @@ ${codeToTest}
 `;
 
 async function validate(generatedTestCode) {
-  // We expect the LLM to write tests that pass against the provided code.
-  // If the tests fail, the LLM has misunderstood the component's behavior.
   return await validateWithJest(generatedTestCode, codeToTest);
 }
 

@@ -33,6 +33,9 @@ async function validateWithJest(testCode, codeToTest) {
 
     fs.writeFileSync(testFilePath, finalTestCode);
 
+    // --- NEW: Define a path for the results file ---
+    const resultsFilePath = path.join(tempDir, "jest-results.json");
+
     const jestConfig = {
       rootDir: tempDir,
       testEnvironment: "jest-environment-jsdom",
@@ -50,23 +53,32 @@ async function validateWithJest(testCode, codeToTest) {
       setupFilesAfterEnv: [path.resolve(__dirname, "../../jest.setup.js")],
     };
 
-    const { results } = await jest.runCLI(
+    // This call will now be silent and write its output to the specified file.
+    await jest.runCLI(
       {
         config: JSON.stringify(jestConfig),
         runInBand: true,
         silent: true,
-        json: true,
+        json: true, // Keep this: it tells Jest to use JSON format for the output file
+        outputFile: resultsFilePath, // --- NEW: Tell Jest where to write the JSON ---
       },
       [tempDir]
     );
 
-    if (results.success) {
-      return { success: true, message: `All ${results.numTotalTests} generated tests passed!` };
-    } else {
-      // --- THE DEFINITIVE FIX FOR THE CRASH ---
-      // This logic now safely handles all known Jest failure modes.
+    // --- NEW: Read the results from the file instead of the returned object ---
+    if (!fs.existsSync(resultsFilePath)) {
+      throw new Error("Jest did not create an output file.");
+    }
+    const resultsJson = fs.readFileSync(resultsFilePath, "utf-8");
+    const results = JSON.parse(resultsJson);
 
-      // First, check if the entire suite failed without running any tests.
+    // The rest of the parsing logic remains the same!
+    if (results.success) {
+      return {
+        success: true,
+        message: `All ${results.numTotalTests} generated tests passed!`,
+      };
+    } else {
       if (results.numTotalTests === 0 && results.testResults[0]) {
         const testSuite = results.testResults[0];
         const suiteFailureMessage = (
@@ -84,14 +96,9 @@ async function validateWithJest(testCode, codeToTest) {
         };
       }
 
-      // If tests did run, parse the assertion failures safely.
-      // We use .reduce() for a robust way to collect failures.
       const failureMessages = results.testResults
         .reduce((acc, testSuite) => {
-          // IMPORTANT: Check if assertionResults exists before trying to access it.
-          if (!testSuite.assertionResults) {
-            return acc;
-          }
+          if (!testSuite.assertionResults) return acc;
           const suiteFailures = testSuite.assertionResults
             .filter((assertion) => assertion.status === "failed")
             .map((assertion) =>
