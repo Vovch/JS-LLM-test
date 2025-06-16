@@ -5,8 +5,7 @@ type UserProfileProps = {
   onUpdate: (newName: string) => void;
 };
 
-// Define the component as a const for easy exporting
-export const UserProfile = ({ initialName, onUpdate }: UserProfileProps) => {
+export function UserProfile({ initialName, onUpdate }: UserProfileProps) {
   const [name, setName] = useState(initialName);
   const [isEditing, setIsEditing] = useState(false);
 
@@ -36,7 +35,6 @@ export const UserProfile = ({ initialName, onUpdate }: UserProfileProps) => {
       )}
     </div>
   );
-};
+}
 
-// Add a default export to make the test setup more robust
 export default UserProfile;

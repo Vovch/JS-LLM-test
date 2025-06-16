@@ -5,7 +5,6 @@ const id = 'react-component-test';
 const description = 'Creates a test set for a React component using react-testing-library.';
 
 const codeToTest = `
-// ./src/mocks/6_reactComponent.tsx
 import React, { useState } from 'react';
 
 type UserProfileProps = {
@@ -44,6 +43,8 @@ export function UserProfile({ initialName, onUpdate }: UserProfileProps) {
     </div>
   );
 }
+
+export default UserProfile;
 `;
 
 const prompt = `
@@ -53,17 +54,22 @@ Given the following React component, create a comprehensive Jest test suite for 
 Your tests must:
 1.  Import 'render', 'screen', and 'fireEvent' from '@testing-library/react'.
 2.  Test that the component renders correctly with initial props.
-3.  Test the user interaction flow: clicking "Edit", changing the input value, and clicking "Save".
+3.  Test the full user interaction flow: clicking "Edit", changing the input value, and clicking "Save".
 4.  Verify that the 'onUpdate' callback is called with the correct new name after saving.
 5.  Use 'jest.fn()' to mock the 'onUpdate' prop.
-6.  Import the component from './src/mocks/6_reactComponent.tsx'.
+6.  Import the component from './codeToTest'.
 7.  Do not add any text other than the pure test code.
+8.  Do not use snapshots for this test.
+
+**Crucially, do NOT mock the 'react' module or any of its hooks like 'useState'. You must test the component's behavior by interacting with the rendered DOM as a user would.**
 
 The component to test is:
 ${codeToTest}
 `;
 
 async function validate(generatedTestCode) {
+  // We expect the LLM to write tests that pass against the provided code.
+  // If the tests fail, the LLM has misunderstood the component's behavior.
   return await validateWithJest(generatedTestCode, codeToTest);
 }
 

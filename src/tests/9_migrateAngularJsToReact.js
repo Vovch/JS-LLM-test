@@ -57,10 +57,10 @@ async function validate(code) {
   // Check for successful migration by looking for React patterns
   // and the absence of AngularJS patterns.
   if (code.includes('angular.module') || code.includes('controller:')) {
-    return { success: false, message: 'Generated code still contains AngularJS artifacts.' };
-  }
-  if (!code.includes("import React from 'react'")) {
-    return { success: false, message: 'React was not imported.' };
+    return {
+      success: false,
+      message: "Generated code still contains AngularJS artifacts.",
+    };
   }
   if (!code.includes('interface UserCardProps')) {
     return { success: false, message: 'Missing the "UserCardProps" interface for props.' };

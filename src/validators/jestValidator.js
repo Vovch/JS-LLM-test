@@ -43,12 +43,11 @@ async function validateWithJest(testCode, codeToTest) {
           { configFile: path.resolve(__dirname, "../../.babelrc") },
         ],
       },
-      // --- FIX #1: Tell Jest where to find node_modules ---
-      // This maps non-relative imports to our main project's node_modules.
       moduleDirectories: [
         "node_modules",
         path.resolve(__dirname, "../../node_modules"),
       ],
+      setupFilesAfterEnv: [path.resolve(__dirname, "../../jest.setup.js")],
     };
 
     const { results } = await jest.runCLI(
@@ -62,16 +61,14 @@ async function validateWithJest(testCode, codeToTest) {
     );
 
     if (results.success) {
-      return {
-        success: true,
-        message: `All ${results.numTotalTests} generated tests passed!`,
-      };
+      return { success: true, message: `All ${results.numTotalTests} generated tests passed!` };
     } else {
-      // --- FIX #2: Handle both assertion failures and suite setup failures ---
-      // Check if the entire test suite failed to run.
-      if (results.numTotalTests === 0 && results.numFailedTestSuites === 1) {
+      // --- THE DEFINITIVE FIX FOR THE CRASH ---
+      // This logic now safely handles all known Jest failure modes.
+
+      // First, check if the entire suite failed without running any tests.
+      if (results.numTotalTests === 0 && results.testResults[0]) {
         const testSuite = results.testResults[0];
-        // Clean the error message from ANSI color codes.
         const suiteFailureMessage = (
           testSuite.failureMessage ||
           testSuite.testExecError?.message ||
@@ -83,24 +80,30 @@ async function validateWithJest(testCode, codeToTest) {
 
         return {
           success: false,
-          message: `Jest test suite failed to run. This is often a module import or configuration error.\n\nDetails:\n${suiteFailureMessage}`,
+          message: `Jest test suite failed to run due to a critical error (e.g., syntax or import error).\n\nDetails:\n${suiteFailureMessage}`,
         };
       }
 
-      // Handle standard assertion failures.
+      // If tests did run, parse the assertion failures safely.
+      // We use .reduce() for a robust way to collect failures.
       const failureMessages = results.testResults
-        .flatMap((testSuite) => testSuite.assertionResults)
-        .filter((assertion) => assertion.status === "failed")
-        .map((assertion) => {
-          return assertion.failureMessages
-            .map((msg) =>
-              msg.replace(
-                /[\u001b\u009b][[()#;?]*.?[0-9]{1,4}(?:;[0-9]{0,4})*.?[0-9A-ORZcf-nqry=><]/g,
-                ""
-              )
-            )
-            .join("\n");
-        })
+        .reduce((acc, testSuite) => {
+          // IMPORTANT: Check if assertionResults exists before trying to access it.
+          if (!testSuite.assertionResults) {
+            return acc;
+          }
+          const suiteFailures = testSuite.assertionResults
+            .filter((assertion) => assertion.status === "failed")
+            .map((assertion) =>
+              assertion.failureMessages
+                .join("\n")
+                .replace(
+                  /[\u001b\u009b][[()#;?]*.?[0-9]{1,4}(?:;[0-9]{0,4})*.?[0-9A-ORZcf-nqry=><]/g,
+                  ""
+                )
+            );
+          return acc.concat(suiteFailures);
+        }, [])
         .join("\n\n---\n\n");
 
       const summary = `Jest tests failed. ${results.numFailedTests}/${results.numTotalTests} failed.`;

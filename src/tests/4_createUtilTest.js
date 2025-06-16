@@ -30,7 +30,7 @@ Your tests must:
 2. Follow the F.I.R.S.T principles.
 3. Include test cases for normal inputs, edge cases (empty string, string with only spaces), and inputs with special characters.
 4. Use 'describe' to group the tests for the 'slugify' function.
-5. Include the function itself into your response with the code by importing it from the file.
+5. Include the function itself into your response with the code by importing it from "./codeToTest".
 6. Do not include any text other than the test code itself.
 
 The function to test is:
