@@ -1,0 +1,30 @@
+{
+  "name": "llm-frontend-tester",
+  "version": "1.0.0",
+  "description": "A frontend testing framework using LLMs",
+  "main": "main.js",
+  "scripts": {
+    "test": "jest"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@babel/core": "^7.27.4",
+    "@babel/preset-env": "^7.27.2",
+    "@babel/preset-react": "^7.27.1",
+    "@babel/preset-typescript": "^7.27.1",
+    "@testing-library/react": "^16.3.0",
+    "axios": "^1.10.0",
+    "babel-jest": "^30.0.0",
+    "chalk": "^4.1.2",
+    "cli-table3": "^0.6.5",
+    "jest": "^30.0.0",
+    "jest-environment-jsdom": "^30.0.0",
+    "openai": "^5.3.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "typescript": "^5.8.3",
+    "yargs": "^16.2.0"
+  }
+}
