@@ -13,17 +13,17 @@ const test10 = require("./10_generateStorybookStory");
 
 // To add a new test, import it here and add it to the array.
 const allTests = [
-  // test1,
-  // test2_0,
-  // test2_1,
-  // test3,
-  // test4,
-  // test5,
-  // test6,
+  test1,
+  test2_0,
+  test2_1,
+  test3,
+  test4,
+  test5,
+  test6,
   test7,
-  // test8,
-  // test9,
-  // test10,
+  test8,
+  test9,
+  test10,
 ];
 
 module.exports = { allTests };
