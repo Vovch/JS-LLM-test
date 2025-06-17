@@ -7,10 +7,28 @@ const ts = require('typescript');
  * @param {object} [options]
  * @param {boolean} [options.isJsx=false] - Set to true to allow JSX syntax.
  * @param {string} [options.context=''] - Optional preceding code (e.g. interfaces) for context.
- * @returns {{success: boolean, message: string}}
+ * @param {boolean} [options.includeAst=false] - Set to true to include the AST in the output. The AST will be a TypeScript SourceFile object.
+ * @returns {{success: boolean, message: string, ast?: ts.SourceFile}}
  */
-function validateTypeScript(code, { isJsx = false, context = '' } = {}) {
+function validateTypeScript(code, { isJsx = false, context = '', includeAst = false } = {}) {
   const fullCode = context + "\n" + code;
+
+  let ast = null;
+  if (includeAst) {
+    try {
+      const sourceFile = ts.createSourceFile(
+        'tempFile.ts', // A fictional file name
+        fullCode,
+        ts.ScriptTarget.ESNext,
+        true, // setParentNodes
+        isJsx ? ts.ScriptKind.TSX : ts.ScriptKind.TS // Set script kind based on JSX
+      );
+      ast = sourceFile;
+    } catch (e) {
+      // If AST generation fails, we don't want to block the rest of the validation
+      console.error("Error generating AST:", e);
+    }
+  }
 
   // --- THE DEFINITIVE FIX ---
   // Create the base compiler options.
@@ -56,7 +74,11 @@ function validateTypeScript(code, { isJsx = false, context = '' } = {}) {
     }
   }
 
-  return { success: true, message: "Code is valid TypeScript." };
+  const returnObj = { success: true, message: "Code is valid TypeScript.", outputText: result.outputText };
+  if (includeAst && ast) {
+    returnObj.ast = ast;
+  }
+  return returnObj;
 }
 
 module.exports = { validateTypeScript };

@@ -1,4 +1,5 @@
 // src/tests/2_createTsMock.js
+const ts = require('typescript'); // Ensure ts is imported
 const { validateTypeScript } = require("../validators/tsValidator");
 const vm = require("vm");
 
@@ -38,44 +39,85 @@ ${interfaceDefinitions}
  * @returns {Promise<{success: boolean, message: string}>}
  */
 async function validate(code) {
-  // 1. First, check if the generated code is valid TypeScript.
-  // We provide the interface definitions as context for the validator.
-  const tsValidation = validateTypeScript(code, {
+  // 1. First, check if the generated code is valid TypeScript and get AST
+  const astValidationResult = validateTypeScript(code, {
     context: interfaceDefinitions,
+    includeAst: true,
   });
-  if (!tsValidation.success) {
-    return tsValidation;
+
+  if (!astValidationResult.success || !astValidationResult.ast) {
+    return {
+        success: astValidationResult.success,
+        message: astValidationResult.ast ? astValidationResult.message : "AST could not be generated."
+    };
   }
 
+  const { ast } = astValidationResult;
+  let mockUsersVarFound = false;
+  let correctTypeAnnotation = false;
+  let correctInitializer = false;
+  let variableStatementCount = 0;
+
+  ts.forEachChild(ast, node => {
+    if (node.kind === ts.SyntaxKind.VariableStatement) {
+      variableStatementCount++;
+      ts.forEachChild(node.declarationList, varDeclaration => {
+        if (varDeclaration.kind === ts.SyntaxKind.VariableDeclaration) {
+          if (varDeclaration.name.getText(ast) === 'mockUsers') {
+            mockUsersVarFound = true;
+            if (varDeclaration.type && varDeclaration.type.kind === ts.SyntaxKind.ArrayType &&
+                varDeclaration.type.elementType && varDeclaration.type.elementType.typeName &&
+                varDeclaration.type.elementType.typeName.getText(ast) === 'User') {
+              correctTypeAnnotation = true;
+            }
+            if (varDeclaration.initializer && varDeclaration.initializer.kind === ts.SyntaxKind.ArrayLiteralExpression) {
+              correctInitializer = true;
+            }
+          }
+        }
+      });
+    }
+  });
+
+  if (!mockUsersVarFound) {
+    return { success: false, message: "AST validation: Variable 'mockUsers' not found." };
+  }
+  if (!correctTypeAnnotation) {
+    return { success: false, message: "AST validation: 'mockUsers' is not typed as 'User[]'." };
+  }
+  if (!correctInitializer) {
+    return { success: false, message: "AST validation: 'mockUsers' is not initialized with an array literal." };
+  }
+  if (variableStatementCount > 1) {
+    return { success: false, message: `AST validation: Expected a single variable declaration for 'mockUsers', but found ${variableStatementCount}.`};
+  }
+
+  // If AST checks pass, proceed to the existing vm.runInContext validation
   // 2. Programmatically execute the code to test the output array.
-  // We use Node's `vm` module to run the code in a secure, isolated sandbox.
   try {
     const sandbox = { module: { exports: {} }, Date: Date };
-    // We must transpile the TS to JS before executing it.
-    const jsCode = require("typescript").transpile(code);
+    // Use the outputText from the initial validation which contains the transpiled JS
+    const jsCode = astValidationResult.outputText;
 
-    // The context includes the sandbox and a 'require' function if needed.
     const context = vm.createContext(sandbox);
-
-    // Run the transpiled JavaScript code in the sandbox.
     vm.runInContext(jsCode, context);
 
-    const { mockUsers } = context;
+    const { mockUsers } = context; // This is the executed JS variable
 
     // 3. Perform a series of checks on the resulting 'mockUsers' array.
     if (!mockUsers) {
       return {
         success: false,
-        message: "Generated code did not produce a 'mockUsers' constant.",
+        message: "Generated code did not produce a 'mockUsers' constant after execution.",
       };
     }
     if (!Array.isArray(mockUsers)) {
-      return { success: false, message: "'mockUsers' is not an array." };
+      return { success: false, message: "'mockUsers' is not an array after execution." };
     }
     if (mockUsers.length !== 10) {
       return {
         success: false,
-        message: `Array length is ${mockUsers.length}, but expected 10.`,
+        message: `Array length is ${mockUsers.length} after execution, but expected 10.`,
       };
     }
 
@@ -83,7 +125,6 @@ async function validate(code) {
     for (let i = 0; i < mockUsers.length; i++) {
       const user = mockUsers[i];
 
-      // Check required fields on all objects
       if (typeof user.id !== "string" || user.id.length === 0) {
         return {
           success: false,
@@ -109,42 +150,32 @@ async function validate(code) {
         };
       }
 
-      // Check for optional fields based on index
-      const hasOptionalUsername =
-        "username" in user && typeof user.username === "string";
-      const hasOptionalAvatar =
-        "avatarUrl" in user.profile &&
-        typeof user.profile.avatarUrl === "string";
-      const hasOptionalBio =
-        "bio" in user.profile && typeof user.profile.avatarUrl === "string";
+      const hasOptionalUsername = "username" in user && typeof user.username === "string";
+      const hasOptionalAvatar = "avatarUrl" in user.profile && typeof user.profile.avatarUrl === "string";
+      // Bug Fix from original: check bio in user.profile, not user.profile.avatarUrl
+      const hasOptionalBio = "bio" in user.profile && typeof user.profile.bio === "string";
 
-      if (hasOptionalUsername) optionalFieldsCount++;
-      if (hasOptionalAvatar) optionalFieldsCount++;
-      if (hasOptionalBio) optionalFieldsCount++;
 
-      // if (i % 2 !== 0) { // Odd indices (1, 3, 5...) are "every second object"
-      //     if (!hasOptionalUsername || !hasOptionalAvatar) {
-      //         return { success: false, message: `User at odd index ${i} is missing required optional fields ('username', 'avatarUrl').` };
-      //     }
-      //     optionalFieldsCount++;
-      // } else { // Even indices (0, 2, 4...)
-      //     if (hasOptionalUsername || hasOptionalAvatar) {
-      //         return { success: false, message: `User at even index ${i} unexpectedly contains optional fields.` };
-      //     }
-      // }
+      if (i % 2 !== 0) { // Odd indices (1, 3, 5...) are "every second object" as per prompt (clarified from original)
+          if (hasOptionalUsername) optionalFieldsCount++;
+          if (hasOptionalAvatar) optionalFieldsCount++;
+          if (hasOptionalBio) optionalFieldsCount++;
+      }
     }
-
+    // The prompt implies optional fields are *only* on every second object.
+    // 10 objects total. 5 objects are "every second" (index 1, 3, 5, 7, 9).
+    // Each of these 5 objects should have 3 optional fields. So 5 * 3 = 15.
     if (optionalFieldsCount !== 15) {
       return {
         success: false,
-        message: `Expected 15 optional fields, but found ${optionalFieldsCount}.`,
+        message: `Expected 15 optional fields in total on every second object, but found ${optionalFieldsCount}.`,
       };
     }
 
     return {
       success: true,
       message:
-        "Generated array has 10 valid users and correctly handles optional fields.",
+        "Generated array has 10 valid users and correctly handles optional fields according to AST and runtime checks.",
     };
   } catch (error) {
     return {
@@ -154,4 +185,4 @@ async function validate(code) {
   }
 }
 
-module.exports = { id, description, prompt, validate };
+module.exports = { id, description, prompt, validate, interfaceDefinitions }; // ensure interfaceDefinitions is exported

@@ -1,4 +1,5 @@
 // src/tests/2_createTsMock.js
+const ts = require('typescript');
 const { validateTypeScript } = require("../validators/tsValidator");
 
 const id = "ts-mock-from-interface_simple";
@@ -34,50 +35,110 @@ ${interfaceDefinitions}
  * @returns {{success: boolean, message: string}}
  */
 async function validate(code) {
-  // We must provide the interface definitions as context for validation.
   const tsValidation = validateTypeScript(code, {
     context: interfaceDefinitions,
+    includeAst: true,
   });
-  if (!tsValidation.success) {
-    return tsValidation;
+
+  if (!tsValidation.success || !tsValidation.ast) {
+    return {
+        success: tsValidation.success,
+        message: tsValidation.ast ? tsValidation.message : "AST could not be generated."
+    };
   }
 
-  // Specific checks for the mock object's structure and content.
-  if (!code.includes("const mockUser: User =")) {
-    return {
-      success: false,
-      message: 'Code does not declare "const mockUser: User".',
-    };
+  const { ast } = tsValidation;
+  let mockUserFound = false;
+  let correctTypeAnnotation = false;
+  let idOk = false;
+  let emailOk = false;
+  let registrationDateOk = false;
+  let profileOk = false;
+  let avatarUrlOk = false;
+
+  ts.forEachChild(ast, node => {
+    if (node.kind === ts.SyntaxKind.VariableStatement) {
+      ts.forEachChild(node.declarationList, varDeclaration => {
+        if (varDeclaration.kind === ts.SyntaxKind.VariableDeclaration) {
+          if (varDeclaration.name.getText(ast) === 'mockUser') {
+            mockUserFound = true;
+
+            if (varDeclaration.type && varDeclaration.type.typeName && varDeclaration.type.typeName.getText(ast) === 'User') {
+              correctTypeAnnotation = true;
+            }
+
+            if (varDeclaration.initializer && varDeclaration.initializer.kind === ts.SyntaxKind.ObjectLiteralExpression) {
+              varDeclaration.initializer.properties.forEach(prop => {
+                const propName = prop.name.getText(ast);
+                if (prop.kind === ts.SyntaxKind.PropertyAssignment) {
+                  const initializer = prop.initializer;
+                  switch (propName) {
+                    case 'id':
+                      if (initializer.kind === ts.SyntaxKind.StringLiteral) {
+                        idOk = true;
+                      }
+                      break;
+                    case 'email':
+                      if (initializer.kind === ts.SyntaxKind.StringLiteral) {
+                        // Basic check for '@' in email, could be more robust
+                        if (initializer.text.includes('@')) {
+                           emailOk = true;
+                        }
+                      }
+                      break;
+                    case 'registrationDate':
+                      if (initializer.kind === ts.SyntaxKind.NewExpression && initializer.expression.getText(ast) === 'Date') {
+                        registrationDateOk = true;
+                      }
+                      break;
+                    case 'profile':
+                      if (initializer.kind === ts.SyntaxKind.ObjectLiteralExpression) {
+                        profileOk = true; // Mark profile as found
+                        initializer.properties.forEach(profileProp => {
+                          if (profileProp.kind === ts.SyntaxKind.PropertyAssignment && profileProp.name.getText(ast) === 'avatarUrl') {
+                            if (profileProp.initializer.kind === ts.SyntaxKind.StringLiteral) {
+                              avatarUrlOk = true;
+                            }
+                          }
+                        });
+                      }
+                      break;
+                  }
+                }
+              });
+            }
+          }
+        }
+      });
+    }
+  });
+
+  if (!mockUserFound) {
+    return { success: false, message: 'Variable "mockUser" not found.' };
   }
-  if (!/id: '.*'/.test(code)) {
-    return {
-      success: false,
-      message: 'Mock is missing a string "id" property.',
-    };
+  if (!correctTypeAnnotation) {
+    return { success: false, message: '"mockUser" is missing type annotation ": User".' };
   }
-  if (!/email: '.*@.*'/.test(code)) {
-    return {
-      success: false,
-      message: 'Mock is missing a valid-looking "email" property.',
-    };
+  if (!idOk) {
+    return { success: false, message: 'Property "id" is missing or not a string literal.' };
   }
-  if (!code.includes("registrationDate: new Date(")) {
-    return {
-      success: false,
-      message: 'Mock is missing "registrationDate: new Date()".',
-    };
+  if (!emailOk) {
+    return { success: false, message: 'Property "email" is missing, not a string literal, or does not contain "@".' };
   }
-  if (!/profile: {[\s\S]*avatarUrl: '.*'[\s\S]*}/.test(code)) {
-    return {
-      success: false,
-      message: 'Mock is missing a nested "profile" object with an avatarUrl.',
-    };
+  if (!registrationDateOk) {
+    return { success: false, message: 'Property "registrationDate" is not a "new Date()".' };
+  }
+  if (!profileOk) { // This checks if 'profile' object itself was found
+    return { success: false, message: 'Property "profile" is not an object literal.' };
+  }
+  if (!avatarUrlOk) { // This specifically checks for 'avatarUrl' within 'profile'
+    return { success: false, message: 'Property "avatarUrl" in "profile" is missing or not a string literal.' };
   }
 
   return {
     success: true,
-    message: "Mock object is structurally valid and compiles correctly.",
+    message: "AST validation passed: mockUser object is structurally valid.",
   };
 }
 
-module.exports = { id, description, prompt, validate };
+module.exports = { id, description, prompt, validate, interfaceDefinitions };

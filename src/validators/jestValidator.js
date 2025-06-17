@@ -25,11 +25,11 @@ async function validateWithJest(testCode, codeToTest) {
 
     fs.writeFileSync(codeFilePath, codeToTest);
 
+    // Ensure the import path correctly resolves to the code file name without extension for JS/TS module resolution.
+    // e.g., if codeFileName is 'codeToTest.ts', test should import './codeToTest'
+    const importPathName = `./${path.parse(codeFileName).name}`;
     const importRegex = /(from\s+)(['"])(\.\/.*?)(['"])/g;
-    const finalTestCode = testCode.replace(
-      importRegex,
-      `$1$2./${path.parse(codeFileName).name}$4`
-    );
+    const finalTestCode = testCode.replace(importRegex, `$1$2${importPathName}$4`);
 
     fs.writeFileSync(testFilePath, finalTestCode);
 
@@ -51,6 +51,11 @@ async function validateWithJest(testCode, codeToTest) {
         path.resolve(__dirname, "../../node_modules"),
       ],
       setupFilesAfterEnv: [path.resolve(__dirname, "../../jest.setup.js")],
+      // Coverage configuration
+      collectCoverage: true,
+      coverageDirectory: path.join(tempDir, "coverage"),
+      coverageReporters: ["json-summary", "text"], // text reporter for console during debugging if needed
+      collectCoverageFrom: [path.basename(codeFilePath)], // Collect coverage from the specific code file
     };
 
     // This call will now be silent and write its output to the specified file.
@@ -72,16 +77,35 @@ async function validateWithJest(testCode, codeToTest) {
     const resultsJson = fs.readFileSync(resultsFilePath, "utf-8");
     const results = JSON.parse(resultsJson);
 
-    // The rest of the parsing logic remains the same!
+    let coverageData = null;
+    const coverageSummaryPath = path.join(tempDir, "coverage", "coverage-summary.json");
+    if (fs.existsSync(coverageSummaryPath)) {
+      try {
+        const coverageJson = fs.readFileSync(coverageSummaryPath, "utf-8");
+        const coverageSummary = JSON.parse(coverageJson);
+        if (coverageSummary && coverageSummary.total) {
+          coverageData = coverageSummary.total;
+        }
+      } catch (covError) {
+        console.error("Error reading or parsing coverage summary:", covError);
+        // Don't fail the whole validation if only coverage parsing fails
+      }
+    }
+
     if (results.success) {
+      let message = `All ${results.numTotalTests} generated tests passed!`;
+      if (coverageData && coverageData.lines) {
+        message += ` Coverage: ${coverageData.lines.pct}% lines.`;
+      }
       return {
         success: true,
-        message: `All ${results.numTotalTests} generated tests passed!`,
+        message: message,
+        coverage: coverageData, // Return full total coverage data
       };
     } else {
+      let failureMessage = "";
       if (results.numTotalTests === 0 && results.testResults[0]) {
-        const testSuite = results.testResults[0];
-        const suiteFailureMessage = (
+        failureMessage = (
           testSuite.failureMessage ||
           testSuite.testExecError?.message ||
           "Unknown suite error"
@@ -89,41 +113,45 @@ async function validateWithJest(testCode, codeToTest) {
           /[\u001b\u009b][[()#;?]*.?[0-9]{1,4}(?:;[0-9]{0,4})*.?[0-9A-ORZcf-nqry=><]/g,
           ""
         );
-
-        return {
-          success: false,
-          message: `Jest test suite failed to run due to a critical error (e.g., syntax or import error).\n\nDetails:\n${suiteFailureMessage}`,
-        };
+        failureMessage = `Jest test suite failed to run due to a critical error (e.g., syntax or import error).\n\nDetails:\n${failureMessage}`;
+      } else {
+        const individualFailureMessages = results.testResults
+          .reduce((acc, testSuite) => {
+            if (!testSuite.assertionResults) return acc;
+            const suiteFailures = testSuite.assertionResults
+              .filter((assertion) => assertion.status === "failed")
+              .map((assertion) =>
+                assertion.failureMessages
+                  .join("\n")
+                  .replace(
+                    /[\u001b\u009b][[()#;?]*.?[0-9]{1,4}(?:;[0-9]{0,4})*.?[0-9A-ORZcf-nqry=><]/g,
+                    ""
+                  )
+              );
+            return acc.concat(suiteFailures);
+          }, [])
+          .join("\n\n---\n\n");
+        const summary = `Jest tests failed. ${results.numFailedTests}/${results.numTotalTests} failed.`;
+        failureMessage = `${summary}\n\n${individualFailureMessages}`;
       }
 
-      const failureMessages = results.testResults
-        .reduce((acc, testSuite) => {
-          if (!testSuite.assertionResults) return acc;
-          const suiteFailures = testSuite.assertionResults
-            .filter((assertion) => assertion.status === "failed")
-            .map((assertion) =>
-              assertion.failureMessages
-                .join("\n")
-                .replace(
-                  /[\u001b\u009b][[()#;?]*.?[0-9]{1,4}(?:;[0-9]{0,4})*.?[0-9A-ORZcf-nqry=><]/g,
-                  ""
-                )
-            );
-          return acc.concat(suiteFailures);
-        }, [])
-        .join("\n\n---\n\n");
-
-      const summary = `Jest tests failed. ${results.numFailedTests}/${results.numTotalTests} failed.`;
+      if (coverageData && coverageData.lines) {
+        failureMessage += `\n(Coverage was ${coverageData.lines.pct}% lines.)`;
+      } else {
+        failureMessage += `\n(Coverage data not available.)`;
+      }
 
       return {
         success: false,
-        message: `${summary}\n\n${failureMessages}`,
+        message: failureMessage,
+        coverage: coverageData,
       };
     }
   } catch (error) {
     return {
       success: false,
       message: `A critical error occurred during Jest execution: ${error.message}`,
+      coverage: null, // Ensure coverage is null in case of critical error before coverage step
     };
   } finally {
     if (fs.existsSync(tempDir)) {

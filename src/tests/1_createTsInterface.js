@@ -1,4 +1,5 @@
 // src/tests/1_createTsInterface.js
+const ts = require('typescript');
 const { validateTypeScript } = require('../validators/tsValidator');
 
 const id = 'ts-interface-from-russian';
@@ -24,48 +25,118 @@ The 'Profile' interface is:
  * @returns {{success: boolean, message: string}}
  */
 async function validate(code) {
-  const tsValidation = validateTypeScript(code);
-  if (!tsValidation.success) {
-    return tsValidation;
-  }
-
-  // Regex breakdown:
-  // \s*     - zero or more whitespace characters
-  // [;,\n]? - an optional semicolon, comma, or newline (covers all valid separators)
-  // $       - ensures this is at the end of a line (multiline mode 'm')
-
-  if (!/interface\s+User/.test(code)) {
+  const tsValidation = validateTypeScript(code, { includeAst: true });
+  if (!tsValidation.success || !tsValidation.ast) {
+    // If basic validation failed or AST is not present, return original validation result
     return {
-      success: false,
-      message: 'Code does not contain "interface User".',
-    };
-  }
-  if (!/id:\s*string\s*[;,\n]?$/m.test(code)) {
-    return {
-      success: false,
-      message: 'Required field "id: string" is missing or malformed.',
-    };
-  }
-  if (!/username\?:\s*string\s*[;,\n]?$/m.test(code)) {
-    return {
-      success: false,
-      message: 'Optional field "username?: string" is missing or malformed.',
-    };
-  }
-  if (!/profile:\s*Profile\s*[;,\n]?$/m.test(code)) {
-    return {
-      success: false,
-      message: 'Nested interface "profile: Profile" is missing or malformed.',
-    };
-  }
-  if (!/interface\s+Profile/.test(code)) {
-    return {
-      success: false,
-      message: 'Code does not contain "interface Profile".',
+        success: tsValidation.success,
+        message: tsValidation.ast ? tsValidation.message : "AST could not be generated."
     };
   }
 
-  return { success: true, message: "All specific interface checks passed." };
+  const { ast } = tsValidation;
+
+  let interfaceCount = 0;
+  let userInterfaceFound = false;
+  let profileInterfaceFound = false;
+
+  const expectedUserProperties = {
+    id: { type: 'string', optional: false, found: false },
+    username: { type: 'string', optional: true, found: false },
+    email: { type: 'string', optional: false, found: false },
+    registrationDate: { type: 'Date', optional: false, found: false },
+    profile: { type: 'Profile', optional: false, found: false },
+  };
+
+  const expectedProfileProperties = {
+    avatarUrl: { type: 'string', optional: true, found: false },
+    bio: { type: 'string', optional: true, found: false },
+  };
+
+  function getPropertyInfo(propertyNode) {
+    const name = propertyNode.name.getText(ast);
+    const optional = !!propertyNode.questionToken;
+    let type = propertyNode.type.getText(ast);
+
+    // Normalize type for common cases, can be expanded
+    if (propertyNode.type.kind === ts.SyntaxKind.StringKeyword) {
+        type = 'string';
+    } else if (propertyNode.type.kind === ts.SyntaxKind.TypeReference) {
+        // For Date or Profile, type.getText(ast) should already be 'Date' or 'Profile'
+        // No special handling needed here unless there are more complex type scenarios
+    }
+    return { name, type, optional };
+  }
+
+  ts.forEachChild(ast, node => {
+    if (node.kind === ts.SyntaxKind.InterfaceDeclaration) {
+      interfaceCount++;
+      const interfaceName = node.name.getText(ast);
+
+      if (interfaceName === 'User') {
+        userInterfaceFound = true;
+        ts.forEachChild(node, member => {
+          if (member.kind === ts.SyntaxKind.PropertySignature) {
+            const propInfo = getPropertyInfo(member);
+            if (expectedUserProperties[propInfo.name]) {
+              const expected = expectedUserProperties[propInfo.name];
+              if (expected.type === propInfo.type && expected.optional === propInfo.optional) {
+                expected.found = true;
+              }
+            }
+          }
+        });
+      } else if (interfaceName === 'Profile') {
+        profileInterfaceFound = true;
+        ts.forEachChild(node, member => {
+          if (member.kind === ts.SyntaxKind.PropertySignature) {
+            const propInfo = getPropertyInfo(member);
+            if (expectedProfileProperties[propInfo.name]) {
+              const expected = expectedProfileProperties[propInfo.name];
+              if (expected.type === propInfo.type && expected.optional === propInfo.optional) {
+                expected.found = true;
+              }
+            }
+          }
+        });
+      }
+    }
+  });
+
+  if (interfaceCount !== 2) {
+    return {
+      success: false,
+      message: `Expected 2 interface declarations, but found ${interfaceCount}.`,
+    };
+  }
+
+  if (!userInterfaceFound) {
+    return { success: false, message: 'Interface "User" not found.' };
+  }
+  for (const propName in expectedUserProperties) {
+    if (!expectedUserProperties[propName].found) {
+      const propDetails = expectedUserProperties[propName];
+      return {
+        success: false,
+        message: `Property "${propName}: ${propDetails.type}${propDetails.optional ? '?' : ''}" not found or mismatched in User interface.`,
+      };
+    }
+  }
+
+  if (!profileInterfaceFound) {
+    return { success: false, message: 'Interface "Profile" not found.' };
+  }
+  for (const propName in expectedProfileProperties) {
+    if (!expectedProfileProperties[propName].found) {
+      const propDetails = expectedProfileProperties[propName];
+      return {
+        success: false,
+        message: `Property "${propName}: ${propDetails.type}${propDetails.optional ? '?' : ''}" not found or mismatched in Profile interface.`,
+      };
+    }
+  }
+
+  return { success: true, message: "AST validation passed." };
 }
 
 module.exports = { id, description, prompt, validate };
